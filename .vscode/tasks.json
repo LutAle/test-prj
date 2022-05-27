@@ -22,11 +22,12 @@
             "type": "shell",
             "command": "cl.exe",
             "args": [
-                //"/PD",
                 "/Zi",
-                "/std:c17", 
-               // "/Fe:build\\",
-                "${file}", "/link /OUT:build\\",
+                "/std:c17",
+                "/Fe:", "build\\",
+                "/Fd:", "build\\",
+                "/Fo:", "build\\", 
+                "${file}", 
                 "\""
             ],
             "group": {
