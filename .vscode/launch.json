@@ -8,14 +8,18 @@
             "name": "debug C MSVC",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/${fileBasenameNoExtension}.exe",
-            "args": [],
+            "program": "${workspaceFolder}/build/main.exe",
+            "args": ["test.txt"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
             "environment": [],
             "console": "externalTerminal",
-            "preLaunchTask":  "${defaultBuildTask}"
-                
+            "preLaunchTask":  "${defaultBuildTask}",
+            "symbolSearchPath": "build",
+            "symbolOptions": {
+                "searchPaths": ["/build"],
+                "searchMicrosoftSymbolServer": false
+            }
         }
     ]
 }

@@ -27,7 +27,7 @@
                 "/Fe:", "build\\",
                 "/Fd:", "build\\",
                 "/Fo:", "build\\", 
-                "${file}", 
+                "main.c", 
                 "\""
             ],
             "group": {
