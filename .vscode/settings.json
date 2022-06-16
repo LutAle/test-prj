@@ -4,6 +4,9 @@
         "stdio.h": "c",
         "string.h": "c",
         "test-data.h": "c",
-        "limits.h": "c"
+        "limits.h": "c",
+        "emv 4.3 book 3 application specification.h": "c",
+        "xutility": "c",
+        "stdlib.h": "c"
     }
 }

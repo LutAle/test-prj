@@ -1,12 +1,15 @@
-#include <stdio.h>   
- 
+ #include <stdio.h>   
  #include <string.h>
- #include "test/test-dataset/test-data.h"
- #include <stdbool.h>
+ #include <limits.h>
+ #include <stdlib.h>
+ #include "EMV 4.3 Book 3 Application Specification.h"
 
 //#define DBG
 
-#define default_file_name "./test.txt"        // default data file with hex strings
+/// Two byte tag value 
+# define DB_TG(bytes)  ((bytes[0]<<8)+bytes[1]) 
+
+#define default_file_name "./test.txt"      // default data file with hex strings
 #define CHR_CNT 0x1000                      // string bufer size 
 #define B_CNT   0x1000                      // card data, in buferr
 
@@ -14,17 +17,227 @@ FILE * file_test_data;
 void * cdata = NULL;                // card data location
 size_t cdata_sz = 0;                // card data size
 char name[] = default_file_name;    // file name with test ANSI-HEX string
-const char * user_data = NULL;            // argv command line string bind pointer
+const char * user_data = NULL;      // argv command line string bind pointer
+
+const unsigned char rs_RID[] = {0xA0,0x00,0x00,0x06,0x58};    //reader supporID
+
+    typedef unsigned char byte;
+    typedef unsigned short udbyte;
+    typedef struct _TLV TLV;
+    typedef struct _TLVNODE TLVNODE;
+    
+
+    struct _TLV {
+        TLV *parrent;        //parent tag structure
+        TLV *child;
+        TLV *first;
+        TLV *last;
+        TLV *next;
+        TLV *prev;
+        byte *self_data;    // contain 
+        int self_size; 
+        udbyte tag;
+        byte len;
+        byte *data;
+    };
 
 // optional vars 
 long jobn = 0;                       // Num card job runs count 
 
 
+///
+/// Return 1 if value standart tag or return 0, else.
+/// @param tag Short (double bute) tag value.
+/// @return Value 1, if is standart tag, else return 0 - unknown tag or arbitrary data
+///
+int isTag(udbyte tag)
+    {
+    for (int i=0;i<taglist_sz;i++) if (taglist[i] == tag) return 1;
+    return 0;
+    }
+
+///
+/// Parse tlv tag stream, return node chain
+/// @param data Pointer to data byte stream
+/// @param len  Length data from data stream
+/// @return Pointer to TLV structure with parsed result or NULL pointer if fail or poor data.
+/// Wrapped consummed data in grandparrent tag = 0x00. Tag chain bind all discovered tags and 
+/// child tag data also was been reparsed 
+/// 
+TLV* parse_data( byte *data, int len) 
+{
+    int head_sz=0;          // tag head_sz
+    TLV this, x = (TLV) {.child =NULL, .data=NULL, .first=NULL, .last=NULL, .len=-1, .next = NULL, .parrent=NULL,
+                        .prev = NULL, .self_data=NULL, .self_size=0, .tag = 0},
+     *r =NULL, *father=NULL, *child = NULL;   // TLV context, tmp, result pointer
+
+    this = x;           // build grandparent tag tree
+    this.tag = 0;
+    this.data = data;   // start init
+    this.len = len;
+
+    if (!data || len<=0) return NULL;   // not valid input
+
+do  {
+    if (isTag(data[0])) // if not catch single byte tag, assume 2 byte tag 
+    {
+    x.tag =  len>0 ?  data[0] : 0;        // assume 1 byte tag
+    x.len =  len>1 ?  data[1] : 0;        // if len acessible
+    x.data = len>2  ? &data[2] : NULL;    // if data acessible
+    x.data = x.len>0 ? x.data : NULL;     // and if data present  
+    head_sz = len-1>0 ? 2 : len;  
+    }
+      else
+           {
+            x.tag =  len>1  ? DB_TG(data) : 0;    // assume 2 byte tag
+            x.len =  len>2  ? data[2]: 0;         // if len acessible
+            x.data = len>3  ? &data[3]: NULL;     // if data acessible
+            x.data = x.len>0  ? x.data : NULL;    // if data present  
+            head_sz = len-2>0 ? 3 : len;        
+           }
+    len -=head_sz;          // crop head data from len             
+                            //  !! len  contain max lenght rest data !!      
+    x.self_data = data;
+    x.self_size = x.len > len ? (len+head_sz)  : (x.len + head_sz); // len contain remain data without head part
+    x.data = x.len>len  ? NULL : x.data;  // failure data len , if data size oversize avaliable data data part
+                                                 // then data NULL pointer use as indicator to not valid parsing
+                                                 // to terminate parsing, x.data == NULL, - invalid tag attribute
+                                                 // x.len >0 and x.data == NULL - fail tag else valid tag
+                                                  
+
+    if ( x.data == NULL && x.len == 0 ||        // valid tag  condition , else all other fail data filter
+         x.data && x.len>0   &&                 // if tag with data, than it contain data usefull for reparsing
+         len >= 0 )                             // else it contain only tag present and len present field without data                  
+        {
+            x.prev = r ? r : NULL;                       // bind with previous parsing chain, if present
+            if (father)
+               father->child = father->child ? father->child : r;  // r contain prev actual tag reference 
+            x.parrent = father ? father : x.parrent;     // set parrent if avaliable
+            r = (TLV*) malloc(sizeof (TLV));             // get new place for new tag   
+                x.first = x.first ? x.first : r;             // if x first absent set it this tag storage - r, else uncange it  
+            if  ( len-x.len == 0 )                       // x - this final tag in chain  
+                {                                        // update last property for all prev tags bind     
+                    x.last = r;                          // save last child tag ref at time after parent tag change      
+                    child = x.prev;                      // work with prev parent chain tags
+                    while ( child  && child->parrent == child->next->parrent ) // if parrent not change in chains
+                     {
+                      child->last = x.last;
+                      child = child->prev;             // go next node chain
+                     }
+                }    
+            r[0] = x;                                  // save parsing result                                        
+            if (r[0].prev)                             // if present
+                r[0].prev->next = r;                   // update prev tag next reference 
+        }
+
+    if (len-x.len <= 0 || (x.len>0  && x.data == NULL)) // end chain, or invalid unfull tag data present, 
+                                                        // load data from prev parsing result 
+                                                        // this logic path only flow if valid parsing flow presented
+                                                        // until all data in flow, from tag tree has been parsed
+        {    
+        father = father ? father : r;   // init <parsed> variable with absent value  
+        TLV *lr = r;                    // local result pointer
+        while (father)
+                 {  // catch valid and unparsed data, child == NULL attrubute mark unparsed tag
+                    // if x.data  present (not NULL), discover data to parsing and break
+                    if (father->data != NULL && father->child == NULL) break;              
+                    else father = father->prev ? father->prev : lr ;    // catch next unparsed tag from prev tag chain 
+                                                                        // or get tag from tail chain - by ref. r
+                    if (father == NULL) break;      // missing unparsed data chain and r chain              
+                    if (father == r) lr = NULL ;    // r chain assign worked out pointer, set it unacessible     
+                 }                                  // father == NULL in this condition assume that all data
+        if (father)                                 // in chain processed
+            {
+                // load new data poiners from aceptable tag from result chain
+                data = father->data;
+                len = father->len;
+                x.parrent = NULL;   // reset parrent ref to recalc in next loop
+                x.last = NULL;      // reset first ref
+                x.first = NULL;     // reset last ref
+                continue;           // forced go new parsing loop                    
+            }                                           
+        }
+    len -= x.len ;          // cutting data portion
+    data += x.self_size;    // shift data pointer to new data portion    
+        
+}   while(father || len >0); // remains unparsed data 
+
+
+while (r->prev != NULL) r = r->prev;            // r - all tags chain, rewind to start tag and return result
+r->parrent = (TLV *) malloc (sizeof(TLV));      // save prandparrent pointer tag
+(r->parrent)[0] = this;                         // load actual values from grandfather
+r->parrent->child = r;                          // bind to father
+r->prev = r->parrent;                           // append to chain
+                                                // r contain parsed data tag chain 
+while (r->next != NULL && r->next->parrent == NULL )
+    {
+        r->next->parrent = r->parrent;          // r->parrent = grandparrent
+        r = r->next;                            // set grandparrent pointer in descedants 
+    }
+
+r = r->prev->parrent;                           // set grandparrent pointer 
+r->next = r->child;                             // bind to general chain
+r->last = r;
+r->first = r;
+
+return r->child;                                 // return parsing result
+                                                // with grandparrent wrap
+}
+
 void job (  )
 {
     jobn++;
     /// Main processing
+    /// Read response, setup response fields.
+    unsigned char SW1 = ((unsigned char *) cdata)[cdata_sz-2];
+    unsigned char SW2 = ((unsigned char *) cdata)[cdata_sz-1];
+    unsigned short SW = ((short *) &((unsigned char *)cdata)[cdata_sz-2])[0];
+    unsigned char *bt = ((unsigned char *)cdata);   //byte pointer 
+    unsigned short *sh = ((unsigned short *)cdata);  //short int pointer
+
+          // read tag 
+        int l=0;    // length
+        int tn=0;   // tag number
+        int i=0;    // index
+        unsigned char 
+         *ntp, // next tag pointer
+         *stp, // sub tag pointer
+         *ltp = &((unsigned char *)cdata)[cdata_sz-2], // limit data pointer
+         *sttp;  //start; next tag position, sub tag position, limit tag position, start tag position    
+ 
+    unsigned char * apps = NULL; 
+    unsigned char app_cnt = 0;
+
+    struct apps  {
+        unsigned char appcnt;
+        unsigned char *app_RID   [UCHAR_MAX];
+        unsigned char *app_priopity[UCHAR_MAX];
+    } a ={.appcnt=0} ;
+
     
+ 
+    if (SW == 0x0090)   // response ok
+      {
+
+      while (1) { 
+
+        // parse single byte tag
+    
+        // task logic
+         if (taglist[i] == _61_APP_TEMPLATE) 
+         {
+             // add to collection
+             printf ("_61_APP_TEMPLATE    jobn %i",jobn);
+            a.appcnt++;
+            unsigned char *tbt;    
+
+         }      
+    
+        } // while 1 
+
+      }
+    else
+    printf ("Not valid operation result %x",SW );
 
     /// reset to default state
     free(cdata);
