@@ -47,13 +47,17 @@ long jobn = 0;                       // Num card job runs count
 
 
 ///
-/// Return 1 if value standart tag or return 0, else.
-/// @param tag Short (double bute) tag value.
-/// @return Value 1, if is standart tag, else return 0 - unknown tag or arbitrary data
+/// Return tag length if value standart tag 1 or 2 or return 0, else.
+/// @param *tag reference on data to testing.
+/// @return Tag length 1 or 2, if is standart tag, else return 0 - unknown tag or arbitrary data
 ///
-int isTag(udbyte tag)
+int tagL(byte *tag)
     {
-    for (int i=0;i<taglist_sz;i++) if (taglist[i] == tag) return 1;
+    int t = tag[0];
+    int tt = DB_TG(tag);
+
+    for (int i=0;i<taglist_sz;i++) if (taglist[i] == t) return 1;
+    for (int i=0;i<taglist_sz;i++) if (taglist[i] == tt) return 2;
     return 0;
     }
 
@@ -80,7 +84,7 @@ TLV* parse_data( byte *data, int len)
     if (!data || len<=2) return NULL;   // not valid input length field must have
 
 do  {
-    if (isTag(data[0])) // if not catch single byte tag, assume 2 byte tag 
+    if (tagL(data) == 1) // if not catch single byte tag, assume 2 byte tag 
     {
     x.tag =  len>0 ?  data[0] : 0;        // assume 1 byte tag
     x.len =  len>1 ?  data[1] : 0;        // if len acessible
@@ -106,7 +110,8 @@ do  {
                                                  // x.len >0 and x.data == NULL - fail tag else valid tag
                                                   
     if (x.len>len && father) father->isDataTLV = 0;
-    x.isDataTLV = x.len>len ? 0 : 1 ;            // set, unset valid TLV data flag it datas not valid TVL   
+    x.isDataTLV = x.len>len || x.len < 2 && tagL(x.self_data) == 1 ||
+                  x.len<3   ? 0 : 1 ;            // set, unset TLV data length validation flag or it datas not valid TVL   
 
     if ( x.data == NULL && x.len == 0 ||        // valid tag  condition , else all other fail data filter
          x.data && x.len>0   &&                 // if tag with data, than it contain data usefull for reparsing
@@ -147,9 +152,13 @@ do  {
         while (father)
                  {  // catch valid and unparsed data, child == NULL attrubute mark unparsed tag
                     // if x.data  present (not NULL), discover data to parsing and break
-                    if (father->data != NULL && father->child == NULL && father->isDataTLV !=0) break;              
-                    else father = father->next ? father->next : lr ;    // catch next unparsed tag from next tag chain 
-                                                                        // or get tag from head chain - by ref. r
+                    if (father->data != NULL && father->child == NULL && father->isDataTLV !=0 &&
+                        ( father->len>1 && tagL(father->data) == 1 ||
+                          father->len>2  ) ) break;                              // data content minimal validation
+                                                                                 // tag and length fields must beens present            
+                    
+                    else father = father->next;         // catch next unparsed tag from next tag chain 
+                                                        // or get tag from head chain - by ref. r
                     if (father == NULL) break;      // missing unparsed data chain and r chain              
                     if (father == r) lr = NULL ;    // r chain assign worked out pointer, set it unacessible     
                  }                                  // father == NULL in this condition assume that all data
