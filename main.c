@@ -143,12 +143,13 @@ do  {
         {    
         father = father ? father : r;   // init <parsed> variable with absent value  
         TLV *lr = r;                    // local result pointer
+        while (father->prev) father=father->prev;       // rewind father object pointer to start chain
         while (father)
                  {  // catch valid and unparsed data, child == NULL attrubute mark unparsed tag
                     // if x.data  present (not NULL), discover data to parsing and break
                     if (father->data != NULL && father->child == NULL && father->isDataTLV !=0) break;              
-                    else father = father->prev ? father->prev : lr ;    // catch next unparsed tag from prev tag chain 
-                                                                        // or get tag from tail chain - by ref. r
+                    else father = father->next ? father->next : lr ;    // catch next unparsed tag from next tag chain 
+                                                                        // or get tag from head chain - by ref. r
                     if (father == NULL) break;      // missing unparsed data chain and r chain              
                     if (father == r) lr = NULL ;    // r chain assign worked out pointer, set it unacessible     
                  }                                  // father == NULL in this condition assume that all data
