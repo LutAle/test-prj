@@ -36,6 +36,7 @@ const unsigned char rs_RID[] = {0xA0,0x00,0x00,0x06,0x58};    //reader supporID
         TLV *prev;
         byte *self_data;    // contain 
         int self_size; 
+        byte isDataTLV; 
         udbyte tag;
         byte len;
         byte *data;
@@ -68,15 +69,15 @@ TLV* parse_data( byte *data, int len)
 {
     int head_sz=0;          // tag head_sz
     TLV this, x = (TLV) {.child =NULL, .data=NULL, .first=NULL, .last=NULL, .len=-1, .next = NULL, .parrent=NULL,
-                        .prev = NULL, .self_data=NULL, .self_size=0, .tag = 0},
-     *r =NULL, *father=NULL, *child = NULL;   // TLV context, tmp, result pointer
+                        .prev = NULL, .self_data=NULL, .self_size=0, .tag = 0, .isDataTLV=1},
+     *r =NULL, *father=NULL, *line = NULL;   // TLV context, tmp, result pointer
 
     this = x;           // build grandparent tag tree
     this.tag = 0;
     this.data = data;   // start init
     this.len = len;
 
-    if (!data || len<=0) return NULL;   // not valid input
+    if (!data || len<=2) return NULL;   // not valid input length field must have
 
 do  {
     if (isTag(data[0])) // if not catch single byte tag, assume 2 byte tag 
@@ -104,26 +105,31 @@ do  {
                                                  // to terminate parsing, x.data == NULL, - invalid tag attribute
                                                  // x.len >0 and x.data == NULL - fail tag else valid tag
                                                   
+    if (x.len>len && father) father->isDataTLV = 0;
+    x.isDataTLV = x.len>len ? 0 : 1 ;            // set, unset valid TLV data flag it datas not valid TVL   
 
     if ( x.data == NULL && x.len == 0 ||        // valid tag  condition , else all other fail data filter
          x.data && x.len>0   &&                 // if tag with data, than it contain data usefull for reparsing
-         len >= 0 )                             // else it contain only tag present and len present field without data                  
+         len >= 0  )                       // else it contain only tag present and len present field without data                  
         {
             x.prev = r ? r : NULL;                       // bind with previous parsing chain, if present
-            if (father)
-               father->child = father->child ? father->child : r;  // r contain prev actual tag reference 
             x.parrent = father ? father : x.parrent;     // set parrent if avaliable
             r = (TLV*) malloc(sizeof (TLV));             // get new place for new tag   
                 x.first = x.first ? x.first : r;             // if x first absent set it this tag storage - r, else uncange it  
-            if  ( len-x.len == 0 )                       // x - this final tag in chain  
+            if (father)
+               father->child = father->child ? father->child : r;  // r contain actual current tag reference to location 
+            if  ( len-x.len <= 0 )                       // x - this final tag in chain  
                 {                                        // update last property for all prev tags bind     
                     x.last = r;                          // save last child tag ref at time after parent tag change      
-                    child = x.prev;                      // work with prev parent chain tags
-                    while ( child  && child->parrent == child->next->parrent ) // if parrent not change in chains
-                     {
-                      child->last = x.last;
-                      child = child->prev;             // go next node chain
-                     }
+                    if (line=x.prev)                     // work with prev the ones parent chain tags
+                      {
+                        line ->next = r;
+                        while ( line  && line->parrent == line->next->parrent ) // if parrent not change in chains
+                        {                                                       // all child to this parrent
+                        line->last = x.last;
+                        line = line->prev;             // go next node chain
+                        }
+                      }
                 }    
             r[0] = x;                                  // save parsing result                                        
             if (r[0].prev)                             // if present
@@ -140,7 +146,7 @@ do  {
         while (father)
                  {  // catch valid and unparsed data, child == NULL attrubute mark unparsed tag
                     // if x.data  present (not NULL), discover data to parsing and break
-                    if (father->data != NULL && father->child == NULL) break;              
+                    if (father->data != NULL && father->child == NULL && father->isDataTLV !=0) break;              
                     else father = father->prev ? father->prev : lr ;    // catch next unparsed tag from prev tag chain 
                                                                         // or get tag from tail chain - by ref. r
                     if (father == NULL) break;      // missing unparsed data chain and r chain              
@@ -151,19 +157,33 @@ do  {
                 // load new data poiners from aceptable tag from result chain
                 data = father->data;
                 len = father->len;
+                father->child = NULL; // explice cler child value
                 x.parrent = NULL;   // reset parrent ref to recalc in next loop
                 x.last = NULL;      // reset first ref
                 x.first = NULL;     // reset last ref
+                x.child = NULL;      // reset child ref
                 continue;           // forced go new parsing loop                    
             }                                           
         }
     len -= x.len ;          // cutting data portion
     data += x.self_size;    // shift data pointer to new data portion    
         
-}   while(father || len >0); // remains unparsed data 
+}   while(father || len >1); // remains unparsed data , minimal tag 2 bytes 
 
-
+#define DBG
 while (r->prev != NULL) r = r->prev;            // r - all tags chain, rewind to start tag and return result
+#ifdef DBG
+TLV *tmp = r;
+int k=0;
+while (r->next) { printf(">:%p->Id:%p->:%p %-4x pt:%-4x n:%-3i",r->parrent, r, r->child ,r->tag, r->parrent? r->parrent->tag : 0, k++ );
+                  printf(" len:%-3x isTLV:%-2i",r->len,r->isDataTLV);
+                  printf(" data:");
+                   for(int n=0;n<r->len;n++) { printf ("%x",r->data[n]);}  r=r->next;
+                  printf("\n"); 
+                }
+r=tmp;
+#endif
+#undef DBG
 r->parrent = (TLV *) malloc (sizeof(TLV));      // save prandparrent pointer tag
 (r->parrent)[0] = this;                         // load actual values from grandfather
 r->parrent->child = r;                          // bind to father
@@ -181,7 +201,7 @@ r->last = r;
 r->first = r;
 
 return r->child;                                 // return parsing result
-                                                // with grandparrent wrap
+                                                 // with grandparrent wrap
 }
 
 void job (  )
@@ -194,46 +214,108 @@ void job (  )
     unsigned short SW = ((short *) &((unsigned char *)cdata)[cdata_sz-2])[0];
     unsigned char *bt = ((unsigned char *)cdata);   //byte pointer 
     unsigned short *sh = ((unsigned short *)cdata);  //short int pointer
-
-          // read tag 
-        int l=0;    // length
-        int tn=0;   // tag number
-        int i=0;    // index
-        unsigned char 
-         *ntp, // next tag pointer
-         *stp, // sub tag pointer
-         *ltp = &((unsigned char *)cdata)[cdata_sz-2], // limit data pointer
-         *sttp;  //start; next tag position, sub tag position, limit tag position, start tag position    
  
+    TLV *r = NULL;
+
     unsigned char * apps = NULL; 
     unsigned char app_cnt = 0;
 
-    struct apps  {
-        unsigned char appcnt;
-        unsigned char *app_RID   [UCHAR_MAX];
-        unsigned char *app_priopity[UCHAR_MAX];
-    } a ={.appcnt=0} ;
+    struct applist  {
+        const byte *app_RID;
+        byte  app_priopity;
+        struct applist *next;
+        struct applist *prev;
+        } *a=NULL,*b=NULL;
 
-    
  
     if (SW == 0x0090)   // response ok
       {
+       r = parse_data(cdata,cdata_sz-2);      // parse data
+       int i =0;
+       a = malloc(sizeof(struct applist));  // get storage location for applist object
+       a->app_priopity = 0x00;              // set default setting app list item
+       a->app_RID =NULL;
+       a->next =NULL;
+       a->prev =NULL;
+       while (r)                           // dicovered _61 tag,and collect all interested child tags
+                {
+                  if  (r->tag == _61_APP_TEMPLATE && r->child != NULL)
+                                                
+                    {
+                        TLV *tr = r->child;     // temp router for walk chain, grab data
+                        do
+                        {                                           // store tags _4F and _87 if present
+                        a->app_RID = (tr->tag == _4F_ADF &&  memcmp(tr->data,rs_RID,5) == 0 ) ?  // =0 ok compare
+                                     rs_RID : a->app_RID;           
+                        // ----- store only data from _61_tag if  its supported given reader RID
+                        a->app_priopity = tr->tag == _87_APPLICATION_PRIORITY_INDICATOR ? tr->data[0] : a->app_priopity;
+                        tr = tr->next;                              // next view child tag chain
+                        }
+                            while (r->child->last == tr->last);
+                    
+                    if (a->app_RID == rs_RID)
+                        {   // if sucessful grab supported reader allocate new item list storage
+                        a->next = malloc(sizeof(struct applist));   // get new list item
+                        a->next->prev = a;                          // bind with next list item  
+                        a = a->next;                                // set pointer to list head
+                        }
+                        // if not rewrite this item, not allocate new list item
+                    }             
+                  if (r->next == NULL) break;
+                  r = r->next;       // to next view tag chain  
+                }     
+    /// end grab information from card response, do sort by _app priority data
+    /// _61 tag with unsupportrd RID was be skip from processing
+     
+    if (a->app_RID !=rs_RID) // cuttof unsupported app list item if it present in head items
+    {
+        a=a->prev;
+        free(a->next);   // free head item
+    }
+    if (a)  // start sorting
+        {
+            struct applist *s_max=NULL, *final=NULL, *start=NULL, *top=NULL, *t, *t2;
+            final = a;                                                   // set final point
+            start = a; while (start->prev!=NULL) start = start->prev;    // set start point
+            top = start;
+            while (1)
+            { 
+            s_max = s_max ? s_max : top;           // init s_max from NULL to exist value                 
 
-      while (1) { 
+                while (top->next) 
+                        {
+                s_max = (s_max->app_priopity & 0x0F <= top->app_priopity & 0x0F) ||
+                        (top->app_priopity & 0x0F == 0) ? s_max : top;      // find most maximum, move above  
+                                                                            // start pointer
+                top = top->next;                                                    
+                        }            
+            
+            if (s_max != start)             // if not start, than do position moving in chain
+                {
+                if (s_max->prev)
+                    s_max->prev->next = s_max->prev ? s_max->next : NULL;    // sew together app list or finished chain
+                s_max->next = start->next;                                   // save start-next ref
+            
+                start->next = s_max;                // move s_max to start
+                s_max->prev = start;                // bind to start chain
+                }
+            top = start;                            // go text loop               
+            if (s_max == start) break; 
+            else s_max = start;
+            }
+            
+        }
+    // Print result 
 
-        // parse single byte tag
+    while ((a = a->prev ? a->prev : a)->prev) ;   // go to start app list
     
-        // task logic
-         if (taglist[i] == _61_APP_TEMPLATE) 
-         {
-             // add to collection
-             printf ("_61_APP_TEMPLATE    jobn %i",jobn);
-            a.appcnt++;
-            unsigned char *tbt;    
-
-         }      
-    
-        } // while 1 
+        printf ("Apps on the card:\n");
+        do 
+        {
+            printf("RID:%hhx%hhx%hhx%hhx%hhx\n",a->app_RID[0],a->app_RID[1],a->app_RID[2],a->app_RID[3],a->app_RID[4]);
+            printf("App priority: %hhx\n",a->app_priopity&0x0F);
+        }
+        while  ((a = a->next ? a->next : a )->next);
 
       }
     else
