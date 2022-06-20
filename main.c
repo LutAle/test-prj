@@ -72,16 +72,28 @@ int tagL(byte *tag)
 TLV* parse_data( byte *data, int len) 
 {
     int head_sz=0;          // tag head_sz
-    TLV this, x = (TLV) {.child =NULL, .data=NULL, .first=NULL, .last=NULL, .len=-1, .next = NULL, .parrent=NULL,
+    
+    TLV  x = (TLV) {.child =NULL, .data=NULL, .first=NULL, .last=NULL, .len=-1, .next = NULL, .parrent=NULL,
                         .prev = NULL, .self_data=NULL, .self_size=0, .tag = 0, .isDataTLV=1},
      *r =NULL, *father=NULL, *line = NULL;   // TLV context, tmp, result pointer
 
-    this = x;           // build grandparent tag tree
-    this.tag = 0;
-    this.data = data;   // start init
-    this.len = len;
+    r = malloc(sizeof(TLV));        // allocate new tag
+    r->child =NULL;                 // build (root)grandparent tag 
+    r->data = data;
+    r->first = r;
+    r->isDataTLV = 1;
+    r->last = r;
+    r->len =len;
+    r->next =NULL;
+    r->parrent = NULL;
+    r->prev =NULL;
+    r->self_data = NULL;            // root tag marker
+    r->self_size = len+3;
+    r->tag = 0;
 
     if (!data || len<=2) return NULL;   // not valid input length field must have
+
+    father = r;             // set parrent data src tag
 
 do  {
     if (tagL(data) == 1) // if not catch single byte tag, assume 2 byte tag 
@@ -108,31 +120,33 @@ do  {
                                                  // then data NULL pointer use as indicator to not valid parsing
                                                  // to terminate parsing, x.data == NULL, - invalid tag attribute
                                                  // x.len >0 and x.data == NULL - fail tag else valid tag
-                                                  
-    if (x.len>len && father) father->isDataTLV = 0;
+
+
+    if (x.len>len) father->isDataTLV = 0;       // reset data valid TLV  
     x.isDataTLV = x.len>len || x.len < 2 && tagL(x.self_data) == 1 ||
                   x.len<3   ? 0 : 1 ;            // set, unset TLV data length validation flag or it datas not valid TVL   
 
-    if ( x.data == NULL && x.len == 0 ||        // valid tag  condition , else all other fail data filter
-         x.data && x.len>0   &&                 // if tag with data, than it contain data usefull for reparsing
-         len >= 0  )                       // else it contain only tag present and len present field without data                  
+    if ( father && father->isDataTLV)            // Save valid parsing
+     if ( x.data == NULL && x.len == 0 ||        // valid tag  condition , else all other fail data filter
+          x.data && x.len>0 )                    // if tag with data, than it contain data usefull for reparsing
+                                                 // else it contain only tag present and len present field without data                  
         {
             x.prev = r ? r : NULL;                       // bind with previous parsing chain, if present
             x.parrent = father ? father : x.parrent;     // set parrent if avaliable
             r = (TLV*) malloc(sizeof (TLV));             // get new place for new tag   
                 x.first = x.first ? x.first : r;             // if x first absent set it this tag storage - r, else uncange it  
-            if (father)
-               father->child = father->child ? father->child : r;  // r contain actual current tag reference to location 
-            if  ( len-x.len <= 0 )                       // x - this final tag in chain  
+
+            father->child = father->child ? father->child : r;  // r contain actual current tag reference to location 
+            if  ( len-x.len == 0 || len == 0 )           // x - this final tag in chain  
                 {                                        // update last property for all prev tags bind     
                     x.last = r;                          // save last child tag ref at time after parent tag change      
                     if (line=x.prev)                     // work with prev the ones parent chain tags
                       {
-                        line ->next = r;
-                        while ( line  && line->parrent == line->next->parrent ) // if parrent not change in chains
-                        {                                                       // all child to this parrent
+                        line->next = r;
+                        while ( line  && line->parrent == father ) // if parrent not change in chains
+                        {                                          // all child to this parrent
                         line->last = x.last;
-                        line = line->prev;             // go next node chain
+                        line = line->prev;             // set in prev node chain, go backward
                         }
                       }
                 }    
@@ -140,70 +154,71 @@ do  {
             if (r[0].prev)                             // if present
                 r[0].prev->next = r;                   // update prev tag next reference 
         }
-
-    if (len-x.len <= 0 || (x.len>0  && x.data == NULL)) // end chain, or invalid unfull tag data present, 
-                                                        // load data from prev parsing result 
-                                                        // this logic path only flow if valid parsing flow presented
-                                                        // until all data in flow, from tag tree has been parsed
-        {    
-        father = father ? father : r;   // init <parsed> variable with absent value  
-        TLV *lr = r;                    // local result pointer
-        while (father->prev) father=father->prev;       // rewind father object pointer to start chain
-        while (father)
+    if (father)                                                           
+    if (len-x.len == 0 || len == 0 || father->isDataTLV == 0)  ///  normal finalise data parsing, load new data from chain
+              {                                                 //  or prev loop with parrent data been parsing fail   
+            if (father->isDataTLV ==0) father->child = NULL;    // reset not valid parsing child ref 
+            while (father->prev) father=father->prev;           // rewind father object pointer to start chain
+            while (father)
                  {  // catch valid and unparsed data, child == NULL attrubute mark unparsed tag
                     // if x.data  present (not NULL), discover data to parsing and break
                     if (father->data != NULL && father->child == NULL && father->isDataTLV !=0 &&
                         ( father->len>1 && tagL(father->data) == 1 ||
-                          father->len>2  ) ) break;                              // data content minimal validation
-                                                                                 // tag and length fields must beens present            
-                    
+                          father->len>2  ) ) break;                         // data content minimal validation
+                                                                            // tag and length fields must beens present            
                     else father = father->next;         // catch next unparsed tag from next tag chain 
-                                                        // or get tag from head chain - by ref. r
-                    if (father == NULL) break;      // missing unparsed data chain and r chain              
-                    if (father == r) lr = NULL ;    // r chain assign worked out pointer, set it unacessible     
-                 }                                  // father == NULL in this condition assume that all data
-        if (father)                                 // in chain processed
-            {
-                // load new data poiners from aceptable tag from result chain
-                data = father->data;
-                len = father->len;
-                father->child = NULL; // explice cler child value
-                x.parrent = NULL;   // reset parrent ref to recalc in next loop
-                x.last = NULL;      // reset first ref
-                x.first = NULL;     // reset last ref
-                x.child = NULL;      // reset child ref
-                continue;           // forced go new parsing loop                    
-            }                                           
+                 }                                      // or be father == NULL that equive missing unparsed data in chain              
+                                                   
+            if (!father) break;     // finish parsing loop, all chain parsed
+		    // load new data poiners from aceptable tag from result chain
+		    data = father->data;
+		    len = father->len;
+		    father->child = NULL;   // explice clear child value
+		    x.parrent = NULL;       // reset parrent ref to recalc in next loop
+		    x.last = NULL;          // reset first ref
+		    x.first = NULL;         // reset last ref
+		    x.child = NULL;         // reset child ref
+		    continue;               // forced go new parsing loop                                                               
         }
-    len -= x.len ;          // cutting data portion
-    data += x.self_size;    // shift data pointer to new data portion    
-        
-}   while(father || len >1); // remains unparsed data , minimal tag 2 bytes 
+    
+    int parseok = len==0 || len >1 && tagL(data) == 1 || len>2 ;   // data for parsing present and data amount   
+                                                                   // above  minimal threshold 
+                                                                   // to contine parse smal TLV
+                                                                   // ol all data parsed.     
+    if (parseok)                // contine parsing    
+        {    
+        len -= x.len ;          // cutting data portion
+        data += x.self_size;    // shift data pointer to new data portion
+        }                                                       
+    else 
+        {                       // Reset parrernt data parsing  
+        if (father)             // if not NULL                     
+            {                                        
+            father->isDataTLV = 0;                 // mark data not valid TLV
+            father->child = NULL;                  // reset chilf ref
+            }
+        while (r && r->parrent == father)  {r=r->prev; free(r->next);}  // remove not valid tag chain
+        }                                                              // next parsing loop
+                                                                        // set new parrent for processing
+         
+}   while(father || len >1 && tagL(data) == 1 || len>2 ); // remains unparsed data , minimal tag 2 or 3 bytes 
 
 #define DBG
 while (r->prev != NULL) r = r->prev;            // r - all tags chain, rewind to start tag and return result
 #ifdef DBG
 TLV *tmp = r;
 int k=0;
-while (r->next) { printf(">:%p->Id:%p->:%p %-4x pt:%-4x n:%-3i",r->parrent, r, r->child ,r->tag, r->parrent? r->parrent->tag : 0, k++ );
+while (r->next) { printf("f:%p l:%p ", r->first, r->last);
+                  printf("p:%p<-Id:%p->c:%p %-4x pt:%-4x n:%-3i",r->parrent, r, r->child ,r->tag, r->parrent? r->parrent->tag : 0, k++ );
+                  printf(" self_size:%-2x",r->self_size);
                   printf(" len:%-3x isTLV:%-2i",r->len,r->isDataTLV);
-                  printf(" data:");
-                   for(int n=0;n<r->len;n++) { printf ("%x",r->data[n]);}  r=r->next;
+                  printf(" data[16]:");
+                   for(int n=0;n<r->len && n<16;n++) {printf ("%-2x ",r->data[n]);}  r=r->next;
                   printf("\n"); 
                 }
 r=tmp;
 #endif
 #undef DBG
-r->parrent = (TLV *) malloc (sizeof(TLV));      // save prandparrent pointer tag
-(r->parrent)[0] = this;                         // load actual values from grandfather
-r->parrent->child = r;                          // bind to father
-r->prev = r->parrent;                           // append to chain
-                                                // r contain parsed data tag chain 
-while (r->next != NULL && r->next->parrent == NULL )
-    {
-        r->next->parrent = r->parrent;          // r->parrent = grandparrent
-        r = r->next;                            // set grandparrent pointer in descedants 
-    }
 
 r = r->prev->parrent;                           // set grandparrent pointer 
 r->next = r->child;                             // bind to general chain
