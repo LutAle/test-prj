@@ -4,7 +4,7 @@
  #include <stdlib.h>
  #include "EMV 4.3 Book 3 Application Specification.h"
 
-//#define DBG
+// #define DBG             // Print debug parsing card response
 
 /// Two byte tag value 
 # define DB_TG(bytes)  ((bytes[0]<<8)+bytes[1]) 
@@ -134,7 +134,7 @@ do  {
             x.prev = r ? r : NULL;                       // bind with previous parsing chain, if present
             x.parrent = father ? father : x.parrent;     // set parrent if avaliable
             r = (TLV*) malloc(sizeof (TLV));             // get new place for new tag   
-                x.first = x.first ? x.first : r;             // if x first absent set it this tag storage - r, else uncange it  
+            x.first = x.first ? x.first : r;             // if x first absent set it this tag storage - r, else uncange it  
 
             father->child = father->child ? father->child : r;  // r contain actual current tag reference to location 
             if  ( len-x.len == 0 || len == 0 )           // x - this final tag in chain  
@@ -153,32 +153,38 @@ do  {
             r[0] = x;                                  // save parsing result                                        
             if (r[0].prev)                             // if present
                 r[0].prev->next = r;                   // update prev tag next reference 
-        }
-    if (father)                                                           
+        }                                                          
     if (len-x.len == 0 || len == 0 || father->isDataTLV == 0)  ///  normal finalise data parsing, load new data from chain
-              {                                                 //  or prev loop with parrent data been parsing fail   
-            if (father->isDataTLV ==0) father->child = NULL;    // reset not valid parsing child ref 
+        {                                                       //  or prev loop with parrent data been parsing fail   
+            if (father->isDataTLV == 0)
+                {
+                    father->child = NULL;                       // reset not valid parsing child ref 
+                    while (r  && r->parrent->isDataTLV == 0)  {r=r->prev; free(r->next);}  // remove not valid tag chain
+                    r->next = NULL;
+                }
             while (father->prev) father=father->prev;           // rewind father object pointer to start chain
-            while (father)
+            while (father)      // give new unparsed father tag
                  {  // catch valid and unparsed data, child == NULL attrubute mark unparsed tag
                     // if x.data  present (not NULL), discover data to parsing and break
-                    if (father->data != NULL && father->child == NULL && father->isDataTLV !=0 &&
-                        ( father->len>1 && tagL(father->data) == 1 ||
-                          father->len>2  ) ) break;                         // data content minimal validation
-                                                                            // tag and length fields must beens present            
+                    
+                    int  iscanparse = father->isDataTLV && (father->len>2 || father->len>1 && tagL(father->data) == 1);  
+                                                                                                // tag and length fields must beens present
+                    if (father->data != NULL && father->child == NULL && iscanparse ) break;    // data content minimal validation
+                                                                                       
                     else father = father->next;         // catch next unparsed tag from next tag chain 
                  }                                      // or be father == NULL that equive missing unparsed data in chain              
-                                                   
-            if (!father) break;     // finish parsing loop, all chain parsed
-		    // load new data poiners from aceptable tag from result chain
-		    data = father->data;
-		    len = father->len;
-		    father->child = NULL;   // explice clear child value
-		    x.parrent = NULL;       // reset parrent ref to recalc in next loop
-		    x.last = NULL;          // reset first ref
-		    x.first = NULL;         // reset last ref
-		    x.child = NULL;         // reset child ref
-		    continue;               // forced go new parsing loop                                                               
+
+            if (father)      
+		        {           // load new data poiners from aceptable tag, if present
+                data = father->data;
+                len = father->len;
+
+                x.parrent = father;     
+                x.last = NULL;          // reset first ref
+                x.first = NULL;         // reset last ref
+                x.child = NULL;         // reset child ref
+                continue;               // forced go new parsing loop                                                               
+                }
         }
     
     int parseok = len==0 || len >1 && tagL(data) == 1 || len>2 ;   // data for parsing present and data amount   
@@ -190,43 +196,33 @@ do  {
         len -= x.len ;          // cutting data portion
         data += x.self_size;    // shift data pointer to new data portion
         }                                                       
-    else 
-        {                       // Reset parrernt data parsing  
-        if (father)             // if not NULL                     
-            {                                        
-            father->isDataTLV = 0;                 // mark data not valid TLV
-            father->child = NULL;                  // reset chilf ref
-            }
-        while (r && r->parrent == father)  {r=r->prev; free(r->next);}  // remove not valid tag chain
-        }                                                              // next parsing loop
-                                                                        // set new parrent for processing
-         
-}   while(father || len >1 && tagL(data) == 1 || len>2 ); // remains unparsed data , minimal tag 2 or 3 bytes 
+    else                        // Reset parrernt data parsing  
+        if (father) father->isDataTLV = 0;      // mark data not valid TLV
+                               // next parsing loop set new parrent and remove invalid childs                                                                      
+}   while(father); 
 
-#define DBG
-while (r->prev != NULL) r = r->prev;            // r - all tags chain, rewind to start tag and return result
+while (r->prev != NULL) r = r->prev;    // r - all tags chain, rewind to start tag and return result
+
+
 #ifdef DBG
 TLV *tmp = r;
 int k=0;
-while (r->next) { printf("f:%p l:%p ", r->first, r->last);
-                  printf("p:%p<-Id:%p->c:%p %-4x pt:%-4x n:%-3i",r->parrent, r, r->child ,r->tag, r->parrent? r->parrent->tag : 0, k++ );
-                  printf(" self_size:%-2x",r->self_size);
-                  printf(" len:%-3x isTLV:%-2i",r->len,r->isDataTLV);
-                  printf(" data[16]:");
-                   for(int n=0;n<r->len && n<16;n++) {printf ("%-2x ",r->data[n]);}  r=r->next;
-                  printf("\n"); 
-                }
+printf("\nData parse the results:\n");
+while (r) {
+            printf("f:%p l:%p ", r->first, r->last);
+            printf("p:%p<-Id:%p->c:%p %-4x pt:%-4x n:%-3i",r->parrent, r, r->child ,r->tag, r->parrent? r->parrent->tag : 0, k++ );
+            printf(" self_size:%-2x",r->self_size);
+            printf(" len:%-3x isTLV:%-2i",r->len,r->isDataTLV);
+            printf(" data[16]:");
+            for(int n=0;n<r->len && n<16;n++) {printf ("%-2x ",r->data[n]);}
+            r=r->next;
+            printf("\n"); 
+        }
 r=tmp;
 #endif
 #undef DBG
 
-r = r->prev->parrent;                           // set grandparrent pointer 
-r->next = r->child;                             // bind to general chain
-r->last = r;
-r->first = r;
-
-return r->child;                                 // return parsing result
-                                                 // with grandparrent wrap
+return r->child;        // return parsing result with grandparrent
 }
 
 void job (  )
@@ -252,99 +248,102 @@ void job (  )
         struct applist *prev;
         } *a=NULL,*b=NULL;
 
- 
     if (SW == 0x0090)   // response ok
-      {
-       r = parse_data(cdata,cdata_sz-2);      // parse data
-       int i =0;
-       a = malloc(sizeof(struct applist));  // get storage location for applist object
-       a->app_priopity = 0x00;              // set default setting app list item
-       a->app_RID =NULL;
-       a->next =NULL;
-       a->prev =NULL;
-       while (r)                           // dicovered _61 tag,and collect all interested child tags
-                {
-                  if  (r->tag == _61_APP_TEMPLATE && r->child != NULL)
-                                                
-                    {
-                        TLV *tr = r->child;     // temp router for walk chain, grab data
-                        do
-                        {                                           // store tags _4F and _87 if present
-                        a->app_RID = (tr->tag == _4F_ADF &&  memcmp(tr->data,rs_RID,5) == 0 ) ?  // =0 ok compare
-                                     rs_RID : a->app_RID;           
-                        // ----- store only data from _61_tag if  its supported given reader RID
-                        a->app_priopity = tr->tag == _87_APPLICATION_PRIORITY_INDICATOR ? tr->data[0] : a->app_priopity;
-                        tr = tr->next;                              // next view child tag chain
-                        }
-                            while (r->child->last == tr->last);
-                    
-                    if (a->app_RID == rs_RID)
-                        {   // if sucessful grab supported reader allocate new item list storage
-                        a->next = malloc(sizeof(struct applist));   // get new list item
-                        a->next->prev = a;                          // bind with next list item  
-                        a = a->next;                                // set pointer to list head
-                        }
-                        // if not rewrite this item, not allocate new list item
-                    }             
-                  if (r->next == NULL) break;
-                  r = r->next;       // to next view tag chain  
-                }     
-    /// end grab information from card response, do sort by _app priority data
-    /// _61 tag with unsupportrd RID was be skip from processing
-     
-    if (a->app_RID !=rs_RID) // cuttof unsupported app list item if it present in head items
     {
-        a=a->prev;
-        free(a->next);   // free head item
-    }
-    if (a)  // start sorting
-        {
-            struct applist *s_max=NULL, *final=NULL, *start=NULL, *top=NULL, *t, *t2;
-            final = a;                                                   // set final point
-            start = a; while (start->prev!=NULL) start = start->prev;    // set start point
-            top = start;
-            while (1)
-            { 
-            s_max = s_max ? s_max : top;           // init s_max from NULL to exist value                 
-
-                while (top->next) 
-                        {
-                s_max = (s_max->app_priopity & 0x0F <= top->app_priopity & 0x0F) ||
-                        (top->app_priopity & 0x0F == 0) ? s_max : top;      // find most maximum, move above  
-                                                                            // start pointer
-                top = top->next;                                                    
-                        }            
-            
-            if (s_max != start)             // if not start, than do position moving in chain
+        r = parse_data(cdata,cdata_sz-2);      // parse data
+        a = malloc(sizeof(struct applist));  // get storage location for applist object
+        a->app_priopity = 0x00;              // set default setting app list item
+        a->app_RID =NULL;
+        a->next =NULL;
+        a->prev =NULL;
+        while (r)                           // dicovered _61 tag,and collect all interested child tags
+            {
+                if  (r->tag == _61_APP_TEMPLATE && r->child != NULL)                                                 
                 {
-                if (s_max->prev)
-                    s_max->prev->next = s_max->prev ? s_max->next : NULL;    // sew together app list or finished chain
-                s_max->next = start->next;                                   // save start-next ref
-            
-                start->next = s_max;                // move s_max to start
-                s_max->prev = start;                // bind to start chain
+                TLV *tr = r->child;     // temp router for walk chain, grab data
+                do
+                    {                                   // store tags _4F and _87 if present
+                    a->app_RID = (tr->tag == _4F_ADF &&  memcmp(tr->data,rs_RID,5) == 0 ) ?  // =0 ok compare
+                                    rs_RID : a->app_RID;           
+                    // ----- store only data from _61_tag if  its supported given reader RID
+                    a->app_priopity = tr->tag == _87_APPLICATION_PRIORITY_INDICATOR ? tr->data[0] & 0x0F : a->app_priopity;
+                    tr = tr->next;                              // next view child tag chain
+                    }
+                        while (tr && r->child->last == tr->last);  
+                            
+                if (a->app_RID == rs_RID)   // if sucessful grab supported reader allocate new item list storage   
+                    {   
+                    a->next = malloc(sizeof(struct applist));   // get new list item
+                    a->next->prev = a;                          // bind back item to new item list item  
+                    a = a->next;                                // set pointer to list head
+                    }
+                    // if not rewrite this item, not allocate new list item
                 }
-            top = start;                            // go text loop               
-            if (s_max == start) break; 
-            else s_max = start;
+                if (r->next == NULL) break;
+                r = r->next;       // to next view tag chain    
+            } 
+        
+        // end grab information from card response, do sort by _app priority data
+        // _61 tag with unsupportrd RID was be skip from processing 
+        
+        if (a->app_RID !=rs_RID) // cuttof unsupported app list item if it present in head items
+            {
+                if (a=a->prev ) free(a->next);      // free head item
+                if (a) a->next=NULL;                // polish chain head 
             }
-            
-        }
-    // Print result 
+        if (a && a->app_RID==rs_RID)  // start sorting and print
+            {
+                struct applist *s_max=NULL, *final=NULL, *start=NULL, *top=NULL, *t, *t2;
+                final = a;                                                   // set final point
+                start = a; while (start->prev!=NULL) start = start->prev;    // set start point
+                top = start;
+                while (1)       // start chain sorting exchange
+                    { 
+                    s_max = s_max ? s_max : top;           // init s_max from NULL to exist value                 
+                        while (top->next) 
+                        {
+                        s_max = (s_max->app_priopity  <= top->app_priopity) ||  // get most maximum, move above
+                                (top->app_priopity == 0) ? s_max : top;         // start pointer                                                   
+                        top = top->next;                                                    
+                        }                   
+                    if (s_max != start)             // if not start, than do position moving in chain
+                        {
+                        if (s_max->prev)
+                            s_max->prev->next = s_max->prev ? s_max->next : NULL;    // sew together app list or finished chain
+                        s_max->next = start->next;                                   // save start-next ref
+                
+                        start->next = s_max;                // move s_max to start
+                        s_max->prev = start;                // bind to start chain
+                        }
+                    top = start;                            // go text loop               
+                    if (s_max == start) break; 
+                    else s_max = start;
+                    }
 
-    while ((a = a->prev ? a->prev : a)->prev) ;   // go to start app list
-    
-        printf ("Apps on the card:\n");
-        do 
-        {
-            printf("RID:%hhx%hhx%hhx%hhx%hhx\n",a->app_RID[0],a->app_RID[1],a->app_RID[2],a->app_RID[3],a->app_RID[4]);
-            printf("App priority: %hhx\n",a->app_priopity&0x0F);
-        }
-        while  ((a = a->next ? a->next : a )->next);
+                // Print result 
 
-      }
+                while (a->prev) a = a->prev;   // go to start app list
+                printf ("\nApps on the card:\n");
+                do 
+                    {
+                    printf("RID:%hhx%hhx%hhx%hhx%hhx\n",a->app_RID[0],a->app_RID[1],a->app_RID[2],a->app_RID[3],a->app_RID[4]);
+                    printf("App priority: %hhx\n",a->app_priopity);
+                    }
+                        while  ( (a = a->next ? a->next : a)->next ); 
+            }
+            else 
+                printf("\nMissing supported apps in card response\n");
+    }
     else
-    printf ("Not valid operation result %x",SW );
+        printf ("Not sucessful response from card %x\n",SW );
+
+    if (r) while (r->prev) r=r->prev;          // go start
+    if (a) while (a->prev) a=a->prev;
+    while (r) {if(r->prev) free(r->prev); r=r->next;}   // deocupate memory
+    while (a) {if(a->prev) free(a->prev); a=a->next;}       
+
+    printf("Job processing card data is %i number.\n",jobn);
+
 
     /// reset to default state
     free(cdata);
