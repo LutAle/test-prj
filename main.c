@@ -4,9 +4,11 @@
  #include <stdlib.h>
  #include "EMV 4.3 Book 3 Application Specification.h"
 
-// #define DBG             // Print debug parsing card response
+// #define DBG                      // Print debug parsing card response
+ #define ONLY_SUPPORTED_APP       // Print only app that support reader
 
-/// Two byte tag value 
+
+/// Two byte tag 
 # define DB_TG(bytes)  ((bytes[0]<<8)+bytes[1]) 
 
 #define default_file_name "./test.txt"      // default data file with hex strings
@@ -233,109 +235,140 @@ void job (  )
     unsigned char SW1 = ((unsigned char *) cdata)[cdata_sz-2];
     unsigned char SW2 = ((unsigned char *) cdata)[cdata_sz-1];
     unsigned short SW = ((short *) &((unsigned char *)cdata)[cdata_sz-2])[0];
-    unsigned char *bt = ((unsigned char *)cdata);   //byte pointer 
-    unsigned short *sh = ((unsigned short *)cdata);  //short int pointer
- 
-    TLV *r = NULL;
 
-    unsigned char * apps = NULL; 
-    unsigned char app_cnt = 0;
+    TLV *r = NULL;
 
     struct applist  {
         const byte *app_RID;
         byte  app_priopity;
         struct applist *next;
         struct applist *prev;
-        } *a=NULL,*b=NULL;
+        } *a = NULL;
 
     if (SW == 0x0090)   // response ok
     {
-        r = parse_data(cdata,cdata_sz-2);      // parse data
-        a = malloc(sizeof(struct applist));  // get storage location for applist object
-        a->app_priopity = 0x00;              // set default setting app list item
-        a->app_RID =NULL;
-        a->next =NULL;
-        a->prev =NULL;
+        r = parse_data(cdata,cdata_sz-2);   // parse data
+
         while (r)                           // dicovered _61 tag,and collect all interested child tags
             {
                 if  (r->tag == _61_APP_TEMPLATE && r->child != NULL)                                                 
                 {
-                TLV *tr = r->child;     // temp router for walk chain, grab data
+                TLV *tr = r->child;             // temp router for walk chain, grab data
+                                                // get storage location for applist object, liitle hard pointer pinpong   
+                if (a)  a = ((a->next = malloc(sizeof(struct applist)))->prev = a)->next;   // renew new item a in chain
+                else   (a = malloc(sizeof(struct applist)))->prev = NULL;    // simple get new allocaton, and set tail NULL   
+                a->next = NULL;         // set new field
+                a->app_RID = NULL;      // value that has exist at new app item born
+                a->app_priopity = 0;    // default
                 do
-                    {                                   // store tags _4F and _87 if present
-                    a->app_RID = (tr->tag == _4F_ADF &&  memcmp(tr->data,rs_RID,5) == 0 ) ?  // =0 ok compare
-                                    rs_RID : a->app_RID;           
-                    // ----- store only data from _61_tag if  its supported given reader RID
-                    a->app_priopity = tr->tag == _87_APPLICATION_PRIORITY_INDICATOR ? tr->data[0] & 0x0F : a->app_priopity;
-                    tr = tr->next;                              // next view child tag chain
+                    {
+                    if (tr->tag == _4F_ADF)      // store tags _4F and _87 if present
+                        a->app_RID = (memcmp(tr->data,rs_RID,5) == 0 ) ? rs_RID : tr->data; // =0 ok compare
+                    if (tr->tag == _87_APPLICATION_PRIORITY_INDICATOR)
+                        a->app_priopity = tr->data[0] & 0x0F;
+                    tr = tr->next;              // view next childs chain tag
                     }
-                        while (tr && r->child->last == tr->last);  
-                            
-                if (a->app_RID == rs_RID)   // if sucessful grab supported reader allocate new item list storage   
-                    {   
-                    a->next = malloc(sizeof(struct applist));   // get new list item
-                    a->next->prev = a;                          // bind back item to new item list item  
-                    a = a->next;                                // set pointer to list head
-                    }
-                    // if not rewrite this item, not allocate new list item
+                      while (tr && r == tr->parrent);   // do until that pareent present in chain  
+                    
                 }
-                if (r->next == NULL) break;
-                r = r->next;       // to next view tag chain    
+                if (r->next == NULL) break; // finish or
+                r = r->next;                // go to search new _61 tag   
             } 
         
         // end grab information from card response, do sort by _app priority data
-        // _61 tag with unsupportrd RID was be skip from processing 
+        // _61 tag with unsupportrd RID 
         
-        if (a->app_RID !=rs_RID) // cuttof unsupported app list item if it present in head items
+        if (a)  // start sorting and print
             {
-                if (a=a->prev ) free(a->next);      // free head item
-                if (a) a->next=NULL;                // polish chain head 
-            }
-        if (a && a->app_RID==rs_RID)  // start sorting and print
-            {
-                struct applist *s_max=NULL, *final=NULL, *start=NULL, *top=NULL, *t, *t2;
-                final = a;                                                   // set final point
-                start = a; while (start->prev!=NULL) start = start->prev;    // set start point
-                top = start;
-                while (1)       // start chain sorting exchange
-                    { 
-                    s_max = s_max ? s_max : top;           // init s_max from NULL to exist value                 
-                        while (top->next) 
-                        {
-                        s_max = (s_max->app_priopity  <= top->app_priopity) ||  // get most maximum, move above
-                                (top->app_priopity == 0) ? s_max : top;         // start pointer                                                   
-                        top = top->next;                                                    
-                        }                   
-                    if (s_max != start)             // if not start, than do position moving in chain
-                        {
-                        if (s_max->prev)
-                            s_max->prev->next = s_max->prev ? s_max->next : NULL;    // sew together app list or finished chain
-                        s_max->next = start->next;                                   // save start-next ref
+                while(a->prev) a = a->prev;         // go to start chain
                 
-                        start->next = s_max;                // move s_max to start
-                        s_max->prev = start;                // bind to start chain
-                        }
-                    top = start;                            // go text loop               
-                    if (s_max == start) break; 
-                    else s_max = start;
-                    }
+                struct applist *start=a, *top=start; // local pointers
+                
+                while (top)         // start chain sorting exchange
+                    {               // find supported app 
+                    if (top && start && top != start)  // do exchange with different items only
+                    if (top->app_RID == rs_RID)         // move to up position supported apps
+                        if (start->app_RID != rs_RID)   // insert before start item if exist start item not supported app 
+                            {
+                                // swap data or swap ref?  - swap ref
+                                if (top->next) top->next->prev = top->prev;
+                                if (top->prev) top->prev->next = top->next;
+                                top->next = start;                                  // ... prev, before <start> after ,next ...
+                                top->prev = start->prev;
+                                start->prev = top; 
+                                start = top;             // set new start position
+                                top = start;             //
+                            }
+                        else // supported app present and need do insertion with its priority order by app_priority field control
+                            {
+                                if (top->app_priopity != 0) // find item with max priority order (small value have largest priority)
+                                   {
+                                    struct  applist *tmp = start;       // temp chain store 
+                                                                        // find max position and ignore 0 app priority                                                            
+                                    while (start && (start->app_priopity > top->app_priopity || start->app_priopity == 0))
+                                           {
+                                            if (start->next == NULL) break;
+                                            start = start->prev;           // stopped in max binding position for top
+                                           }
 
+                                    if (top->next) top->next->prev=top->prev;   // insert after start position
+                                    if (top->prev) top->prev->next = top->next;
+                                    top->prev = start;
+                                    top->next = start->next;
+                                    start->next = top;
+                                    start = tmp;                                // restore initial start position
+                                    top = start;                                // go to new pass, renew top pointer            
+                                   }
+                                else        // insert after rel start app position, top app with 0 ptiority
+                                    {       // set in tail app chain, actual start app presented,
+                                            // not supported app no move througth app list and shift to end chains
+                                    if (top->next) top->next->prev=top->prev;
+                                    if (top->prev) top->prev->next = top->next;
+                                    top->next = start->next;
+                                    top->prev = start;
+                                    start->next = top;
+                                    start = top;    // renew start pointer
+                                    }
+                            }
+                        top=top->next;      // go test new item from was be reaind tail chain
+                    }                       // at missing new items to test, finish chain rebuilding
+                    
                 // Print result 
 
                 while (a->prev) a = a->prev;   // go to start app list
                 printf ("\nApps on the card:\n");
-                do 
+                int reclamationout = 1;
+                while (a) 
                     {
-                    printf("RID:%hhx%hhx%hhx%hhx%hhx\n",a->app_RID[0],a->app_RID[1],a->app_RID[2],a->app_RID[3],a->app_RID[4]);
+                    
+                    #ifdef ONLY_SUPPORTED_APP                 // set to printout only supported app    
+                    if ( !a->app_RID || a->app_RID != rs_RID)
+                        {
+                            if (a->next == NULL) break;         // go print next or go relax 
+                            a=a->next;
+                            continue;
+                        }
+                    #endif
+                    
+                    if (a->app_RID) 
+                        {
+                        if (a->app_RID != rs_RID && reclamationout )
+                           {printf ("Unsupported ! app:\n"); reclamationout = 0; }
+                        printf("RID:%hhx%hhx%hhx%hhx%hhx\n",a->app_RID[0],a->app_RID[1],a->app_RID[2],a->app_RID[3],a->app_RID[4]);
+                        }
+                    else
+                        printf("RID:NULL - !RID not present in card response\n" ); 
                     printf("App priority: %hhx\n",a->app_priopity);
-                    }
-                        while  ( (a = a->next ? a->next : a)->next ); 
+
+                    if (a->next == NULL) break;         // go print next or go relax 
+                    a=a->next;
+                    } 
             }
             else 
-                printf("\nMissing supported apps in card response\n");
+                printf("\nMissing apps in card response\n");
     }
     else
-        printf ("Not sucessful response from card %x\n",SW );
+        printf ("Not sucessful response from card %#x\n",SW );
 
     if (r) while (r->prev) r=r->prev;          // go start
     if (a) while (a->prev) a=a->prev;
