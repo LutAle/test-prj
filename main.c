@@ -4,8 +4,8 @@
  #include <stdlib.h>
  #include "EMV 4.3 Book 3 Application Specification.h"
 
-// #define DBG                      // Print debug parsing card response
- #define ONLY_SUPPORTED_APP       // Print only app that support reader
+// #define DBG                      // Print debug parsing card response, sets in build config
+// #define ONLY_SUPPORTED_APP       // Print only app that support reader, sets in build config
 
 
 /// Two byte tag 
@@ -401,9 +401,6 @@ void  push_cdata(char * source, size_t size)
     // copy done, go next
     cdata_sz +=size;    // rewind cdata memory size
     free(cdataold);
-    #ifdef DBG
-    printf ("%i\n",cdata_sz);
-    #endif
     }
 
 int main(int argc, char const *argv[])

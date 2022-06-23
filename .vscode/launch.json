@@ -4,22 +4,49 @@
     // Для получения дополнительной информации посетите: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        {
-            "name": "debug C MSVC",
-            "type": "cppvsdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/build/main.exe",
-            "args": ["test.txt"],
-            "stopAtEntry": false,
-            "cwd": "${fileDirname}",
-            "environment": [],
-            "console": "externalTerminal",
-            "preLaunchTask":  "${defaultBuildTask}",
-            "symbolSearchPath": "build",
-            "symbolOptions": {
-                "searchPaths": ["/build"],
-                "searchMicrosoftSymbolServer": false
-            }
-        }
+    {
+        "name": "Run with data text.txt",
+        "type": "cppvsdbg",
+        "request": "launch",
+        "program": "build/main.exe",
+        "args": ["text.txt"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        "console": "externalTerminal"
+    },
+    {
+        "name": "Debug:Build +DBG",
+        "type": "cppvsdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/build/main.exe",
+        "args": ["test.txt"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        "preLaunchTask": "+DBG",
+        "console": "externalTerminal"
+    },
+    {
+        "name": "Debug:Build -ONLY_SUPPORTED_APP",
+        "type": "cppvsdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/build/main.exe",
+        "args": ["test.txt"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        "preLaunchTask": "-ONLY_SUPPORTED_APP",
+        "console": "externalTerminal"
+    },
+    {
+        "name": "Debug:Build default C_MSVC",
+        "type": "cppvsdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/build/main.exe",
+        "args": ["test.txt"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        "console": "externalTerminal",
+        "preLaunchTask":  "${defaultBuildTask}",
+        "symbolSearchPath": "build"
+    }
     ]
 }
